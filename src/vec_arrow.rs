@@ -24,8 +24,8 @@ impl VecArrow {
             target_coordinate_space,
             thickness: 0.1,
             color: Color::WHITE,
-            tip_thickness: 0.5,
-            tip_length: 0.5,
+            tip_thickness: 0.2,
+            tip_length: 0.1,
         }
     }
 
@@ -52,7 +52,13 @@ pub enum TargetCoordinateSpace {
 /// and marks the main body of the arrow
 /// (which is a cylinder).
 #[derive(Component)]
-struct VecArrowBody {}
+pub(crate) struct VecArrowBody {}
+
+/// This component is used by the plugin internally
+/// and marks the tip of the arrow
+/// (which is a cone).
+#[derive(Component)]
+pub(crate) struct VecArrowTip {}
 
 /// This component is used by the plugin internally
 /// to store the Entity ids for the arrow parts.
@@ -68,20 +74,12 @@ pub(crate) fn on_attach_vec_arrow(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    query: Query<
-        (
-            Entity,
-            Option<&Transform>,
-            Option<&GlobalTransform>,
-            &VecArrow,
-        ),
-        Added<VecArrow>,
-    >,
+    query: Query<(Entity, Option<&GlobalTransform>, &VecArrow), Added<VecArrow>>,
 ) {
     // When a vec-arrow is added,
     // we need to create a cylinder
     // and a cone.
-    for (new_parent_entity, parent_transform, parent_global_transform, new_arrow) in query.iter() {
+    for (new_parent_entity, parent_global_transform, new_arrow) in query.iter() {
         // Ensure the parent has Visibility and Transform components
         commands
             .entity(new_parent_entity)
@@ -94,28 +92,29 @@ pub(crate) fn on_attach_vec_arrow(
                 // Mesh3d(meshes.add(Cone::new(0.1, 1.0))),
                 MeshMaterial3d(materials.add(new_arrow.color)),
                 get_body_transform(
-                    parent_transform,
+                    parent_global_transform.cloned(),
                     &new_arrow.target,
                     &new_arrow.target_coordinate_space,
                 ),
                 VecArrowBody {},
                 Name::new(format!("VecArrowBody for {}", new_parent_entity)),
             ))
-            .set_parent(new_parent_entity)
             .id();
 
         let tip = commands
             .spawn((
-                Mesh3d(meshes.add(Cone::new(0.1, 1.0))),
+                Mesh3d(meshes.add(Cone::new(1.0, 1.0))),
                 MeshMaterial3d(materials.add(new_arrow.color)),
                 get_tip_transform(
-                    parent_transform,
+                    parent_global_transform.cloned(),
                     &new_arrow.target,
                     &new_arrow.target_coordinate_space,
+                    new_arrow.tip_length,
+                    new_arrow.tip_thickness,
                 ),
                 Name::new(format!("VecArrowTip for {}", new_parent_entity)),
+                VecArrowTip {},
             ))
-            .set_parent(new_parent_entity)
             .id();
 
         commands
@@ -145,57 +144,154 @@ pub(crate) fn on_remove_vec_arrow(
     }
 }
 
+pub(crate) fn update_vec_arrow(
+    parent_transforms: Query<(&GlobalTransform, &VecArrow, &VecArrowParts)>,
+    mut body_query: Query<(&mut Transform, &VecArrowBody), Without<VecArrowTip>>,
+    mut tip_query: Query<(&mut Transform, &VecArrowTip), Without<VecArrowBody>>,
+) {
+    for (global_transform, vec_arrow, parts) in parent_transforms.iter() {
+        let new_body_transform = get_body_transform(
+            Some(*global_transform),
+            &vec_arrow.target,
+            &vec_arrow.target_coordinate_space,
+        );
+        let new_tip_transform = get_tip_transform(
+            Some(*global_transform),
+            &vec_arrow.target,
+            &vec_arrow.target_coordinate_space,
+            vec_arrow.tip_length,
+            vec_arrow.tip_thickness,
+        );
+
+        let (mut body_transform, _) = body_query.get_mut(parts.body).unwrap();
+        *body_transform = new_body_transform;
+
+        let (mut tip_transform, _) = tip_query.get_mut(parts.tip).unwrap();
+        *tip_transform = new_tip_transform;
+    }
+}
+
 fn get_body_transform(
-    parent_transform: Option<&Transform>,
+    parent_transform: Option<GlobalTransform>,
     target: &Vec3,
     target_coordinate_space: &TargetCoordinateSpace,
 ) -> Transform {
+    // If the target vector is in the local coordinate system,
+    // then it looks like a vector from the origin directly to the target.
+    // However, if it's in the global coordinate system,
+    // then the arrow is shifted in the opposite direction.
+    let target = match target_coordinate_space {
+        TargetCoordinateSpace::Local => *target,
+        TargetCoordinateSpace::Global => {
+            -parent_transform.unwrap_or_default().translation() + *target
+        }
+    };
+
+    let Some(normalized) = target.try_normalize() else {
+        // If the target is a zero vector,
+        // return a transform with a zero scale.
+        return Transform::from_scale(Vec3::ZERO);
+    };
+
+    // When pointing at a spot in the local transform,
+    // the cylinder's position is just 1/2 of the target.
+    let my_position = target / 2.0;
+
+    let mut my_local_transform = Transform::from_translation(my_position);
+
+    // After the look transform is applied, Apply a 90 degree rotation along X
+    my_local_transform.rotate(Quat::from_rotation_arc(Vec3::Y, normalized));
+
+    // The Y scale of the cylinder is equal to the distance
+    // between the parent's position and the target
+    // (because unscaled, the height is equal to 1)
+    let my_scale = Vec3::new(1.0, target.length(), 1.0);
+    let mut my_local_transform = my_local_transform.with_scale(my_scale);
+
     match target_coordinate_space {
-        TargetCoordinateSpace::Global => todo!(),
+        TargetCoordinateSpace::Global => {
+            // If the target is in the global coordinate space,
+            // then our local transform is already correct.
+            // All we need to do is translate it to match the parent's origin.
+            my_local_transform.translation += parent_transform.unwrap_or_default().translation();
+            my_local_transform
+        }
         TargetCoordinateSpace::Local => {
-            let Some(normalized) = target.try_normalize() else {
-                // If the target is a zero vector,
-                // return a transform with a zero scale.
-                return Transform::from_scale(Vec3::ZERO);
-            };
+            // If the target is in the local coordinate space,
+            // then we need to apply the parent's transform
+            // to our current one.
+            // We have to do this selectively, only doing translation and rotation.
+            let parent_transform = parent_transform.unwrap_or_default();
+            let mut my_global_transform = my_local_transform;
+            my_global_transform.translation = parent_transform
+                .rotation()
+                .mul_vec3(my_global_transform.translation)
+                + parent_transform.translation();
+            my_global_transform.rotation = parent_transform
+                .rotation()
+                .mul_quat(my_global_transform.rotation);
 
-            // When pointing at a spot in the local transform,
-            // the cylinder's position is just 1/2 of the target.
-            let my_position = target / 2.0;
-
-            let mut my_transform = Transform::from_translation(my_position);
-
-            // After the look transform is applied, Apply a 90 degree rotation along X
-            my_transform.rotate(Quat::from_rotation_arc(Vec3::Y, normalized));
-
-            // The Y scale of the cylinder is equal to the distance
-            // between the parent's position and the target
-            // (because unscaled, the height is equal to 1)
-            let my_scale = Vec3::new(1.0, target.length(), 1.0);
-            let my_transform = my_transform.with_scale(my_scale);
-
-            my_transform
+            my_global_transform
         }
     }
 }
 
 fn get_tip_transform(
-    parent_transform: Option<&Transform>,
+    parent_transform: Option<GlobalTransform>,
     target: &Vec3,
     target_coordinate_space: &TargetCoordinateSpace,
+    tip_length: f32,
+    tip_thickness: f32,
 ) -> Transform {
-    match target_coordinate_space {
-        TargetCoordinateSpace::Global => todo!(),
-        TargetCoordinateSpace::Local => {
-            let Some(normalized) = target.try_normalize() else {
-                // If the target is a zero vector,
-                // return a transform with a zero scale.
-                return Transform::from_scale(Vec3::ZERO);
-            };
+    // If the target vector is in the local coordinate system,
+    // then it looks like a vector from the origin directly to the target.
+    // However, if it's in the global coordinate system,
+    // then the arrow is shifted in the opposite direction.
+    let target = match target_coordinate_space {
+        TargetCoordinateSpace::Local => *target,
+        TargetCoordinateSpace::Global => {
+            -parent_transform.unwrap_or_default().translation() + *target
+        }
+    };
 
-            let mut my_transform = Transform::from_translation(*target);
-            my_transform.rotate(Quat::from_rotation_arc(Vec3::Y, normalized));
-            my_transform
+    let Some(normalized) = target.try_normalize() else {
+        // If the target is a zero vector,
+        // return a transform with a zero scale.
+        return Transform::from_scale(Vec3::ZERO);
+    };
+
+    let mut my_local_transform = Transform::from_translation(target);
+    my_local_transform.rotate(Quat::from_rotation_arc(Vec3::Y, normalized));
+
+    // X, Z transform to match the thickness,
+    // Y transform to match the length
+    my_local_transform.scale = Vec3::new(tip_thickness, tip_length, tip_thickness);
+
+    match target_coordinate_space {
+        TargetCoordinateSpace::Global => {
+            // If the target is in the global coordinate space,
+            // then our local transform is already correct,
+            // so we return that.
+            my_local_transform.translation += parent_transform.unwrap_or_default().translation();
+            my_local_transform
+        }
+        TargetCoordinateSpace::Local => {
+            // If the target is in the local coordinate space,
+            // then we need to apply the parent's transform
+            // to our current one.
+            // We have to do this selectively, only doing translation and rotation.
+            let parent_transform = parent_transform.unwrap_or_default();
+            let mut my_global_transform = my_local_transform;
+
+            my_global_transform.translation = parent_transform
+                .rotation()
+                .mul_vec3(my_global_transform.translation)
+                + parent_transform.translation();
+            my_global_transform.rotation = parent_transform
+                .rotation()
+                .mul_quat(my_global_transform.rotation);
+
+            my_global_transform
         }
     }
 }

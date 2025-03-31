@@ -24,7 +24,8 @@ fn main() {
         .add_systems(Startup, setup_instructions)
         .add_systems(Update, turntable_system)
         .add_systems(Update, on_space_press_roll)
-        .add_systems(Update, update_instructions)
+        .add_systems(Update, on_tab_press_toggle_coordinate_space)
+        .add_systems(Update, on_wasd_press_move_cube)
         .run();
 }
 
@@ -53,7 +54,7 @@ fn setup(
         .spawn((
             Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
             MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-            Transform::from_xyz(0.0, 0.5, 0.0),
+            Transform::from_xyz(0.0, 1.0, 0.0),
             Name::new("Cube"),
             CubeMarker,
         ))
@@ -71,6 +72,11 @@ fn setup(
             Name::new("Z arrow"),
             VecArrow::new(Vec3::new(0.0, 0.0, 2.0), TargetCoordinateSpace::Local)
                 .with_color(Color::linear_rgb(0.0, 0.0, 1.0)),
+        ))
+        .with_child((
+            Name::new("XY arrow"),
+            VecArrow::new(Vec3::new(2.0, 2.0, 0.0), TargetCoordinateSpace::Local)
+                .with_color(Color::linear_rgb(1.0, 1.0, 0.0)),
         ));
     // light
     commands.spawn((
@@ -102,9 +108,19 @@ fn setup(
         .set_parent(parent);
 }
 
-fn turntable_system(mut query: Query<(&mut Transform, &TurntableMarker)>) {
-    for (mut transform, _) in query.iter_mut() {
-        transform.rotate_y(0.01);
+fn turntable_system(
+    mut query: Query<(&mut Transform, &TurntableMarker)>,
+    keypresses: Res<ButtonInput<KeyCode>>,
+) {
+    if keypresses.pressed(KeyCode::KeyO) {
+        for (mut transform, _) in query.iter_mut() {
+            transform.rotate_y(-0.05);
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyP) {
+        for (mut transform, _) in query.iter_mut() {
+            transform.rotate_y(0.05);
+        }
     }
 }
 
@@ -146,15 +162,71 @@ fn on_space_press_roll(
     }
 }
 
-fn setup_instructions(mut commands: Commands) {
-    commands.spawn((Text::default(), Node {
-        position_type: PositionType::Absolute,
-        top: Val::Px(12.0),
-        left: Val::Px(12.0),
-        ..default()
-    }));
+fn on_tab_press_toggle_coordinate_space(
+    keypresses: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut VecArrow>,
+) {
+    if keypresses.just_pressed(KeyCode::Tab) {
+        for mut arrow in query.iter_mut() {
+            arrow.target_coordinate_space = match arrow.target_coordinate_space {
+                TargetCoordinateSpace::Global => TargetCoordinateSpace::Local,
+                TargetCoordinateSpace::Local => TargetCoordinateSpace::Global,
+            }
+        }
+    }
 }
 
-fn update_instructions(mut text: Single<&mut Text>) {
-    text.0 = format!("Press space to roll the cube");
+fn on_wasd_press_move_cube(
+    keypresses: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut Transform, With<CubeMarker>>,
+) {
+    let speed = 0.1;
+    if keypresses.pressed(KeyCode::KeyW) {
+        for mut transform in query.iter_mut() {
+            transform.translation += Vec3::X * speed;
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyS) {
+        for mut transform in query.iter_mut() {
+            transform.translation -= Vec3::X * speed;
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyA) {
+        for mut transform in query.iter_mut() {
+            transform.translation -= Vec3::Z * speed;
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyD) {
+        for mut transform in query.iter_mut() {
+            transform.translation += Vec3::Z * speed;
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyQ) {
+        for mut transform in query.iter_mut() {
+            transform.translation += Vec3::Y * speed;
+        }
+    }
+    if keypresses.pressed(KeyCode::KeyE) {
+        for mut transform in query.iter_mut() {
+            transform.translation -= Vec3::Y * speed;
+        }
+    }
+}
+
+fn setup_instructions(mut commands: Commands) {
+    commands.spawn((
+        Text::new(
+            r"
+Press Space to roll the cube
+Press Tab to toggle between local and global coordinate spaces
+WASD, Q/E to move the cube
+O/P to rotate turntable",
+        ),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+    ));
 }
