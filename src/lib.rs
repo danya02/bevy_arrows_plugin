@@ -1,8 +1,7 @@
 pub mod vec_arrow;
-
 use bevy::app::{Plugin, PostUpdate};
 
-/// This plugin adds systems that keep track of the [`Arrow`] components,
+/// This plugin adds systems that keep track of the [`vec_arrow::VecArrow`] components,
 /// and updates the arrow items accordingly.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct BevyArrowsPlugin;
@@ -17,4 +16,5 @@ impl Plugin for BevyArrowsPlugin {
 
 pub mod prelude {
     pub use crate::BevyArrowsPlugin;
+    pub use crate::vec_arrow::VecArrow;
 }

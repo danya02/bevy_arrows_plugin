@@ -10,10 +10,16 @@ pub struct VecArrow {
     /// What coordinate system is the target in?
     pub target_coordinate_space: TargetCoordinateSpace,
 
+    /// Thickness of the line in scene units.
     pub thickness: f32,
+
+    /// Color of the line and the tip.
     pub color: Color,
 
+    /// Thickness of the tip (diameter at the bottom of the arrow)
     pub tip_thickness: f32,
+
+    /// Length of the tip
     pub tip_length: f32,
 }
 
