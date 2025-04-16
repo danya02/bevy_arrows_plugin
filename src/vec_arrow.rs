@@ -24,8 +24,8 @@ impl VecArrow {
             target_coordinate_space,
             thickness: 0.1,
             color: Color::WHITE,
-            tip_thickness: 0.2,
-            tip_length: 0.1,
+            tip_thickness: 0.075,
+            tip_length: 0.15,
         }
     }
 
@@ -146,8 +146,23 @@ pub(crate) fn on_remove_vec_arrow(
 
 pub(crate) fn update_vec_arrow(
     parent_transforms: Query<(&GlobalTransform, &VecArrow, &VecArrowParts)>,
-    mut body_query: Query<(&mut Transform, &VecArrowBody), Without<VecArrowTip>>,
-    mut tip_query: Query<(&mut Transform, &VecArrowTip), Without<VecArrowBody>>,
+    mut body_query: Query<
+        (
+            &mut Transform,
+            &MeshMaterial3d<StandardMaterial>,
+            &VecArrowBody,
+        ),
+        Without<VecArrowTip>,
+    >,
+    mut tip_query: Query<
+        (
+            &mut Transform,
+            &MeshMaterial3d<StandardMaterial>,
+            &VecArrowTip,
+        ),
+        Without<VecArrowBody>,
+    >,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (global_transform, vec_arrow, parts) in parent_transforms.iter() {
         let new_body_transform = get_body_transform(
@@ -163,11 +178,17 @@ pub(crate) fn update_vec_arrow(
             vec_arrow.tip_thickness,
         );
 
-        let (mut body_transform, _) = body_query.get_mut(parts.body).unwrap();
+        let (mut body_transform, body_material, _) = body_query.get_mut(parts.body).unwrap();
         *body_transform = new_body_transform;
+        if let Some(material) = materials.get_mut(&body_material.0) {
+            material.base_color = vec_arrow.color;
+        }
 
-        let (mut tip_transform, _) = tip_query.get_mut(parts.tip).unwrap();
+        let (mut tip_transform, tip_material, _) = tip_query.get_mut(parts.tip).unwrap();
         *tip_transform = new_tip_transform;
+        if let Some(material) = materials.get_mut(&tip_material.0) {
+            material.base_color = vec_arrow.color;
+        }
     }
 }
 
