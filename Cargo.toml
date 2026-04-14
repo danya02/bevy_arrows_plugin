@@ -16,4 +16,4 @@ bevy = { version = "0.15.3", default-features = false, features = ["bevy_asset",
 bevy = "0.15.3"
 bevy-inspector-egui = "0.30.0"
 bevy_tweening = "0.12.0"
-rand = "0.9.0"
+rand = "0.9.3"
